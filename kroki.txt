@@ -1,0 +1,233 @@
+to parametrize:
+url (without www): steps 3b,7,9,13b,14b
+e-mail: step 9
+
+I. RUN AN EMPTY PAGE AND CERTIFY URL FOR LATER USE
+
+1. Create directory on server:
+    sudo mkdir -p /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site
+2. Create docker-compose file on server:
+    sudo nano /docker/letsencrypt-docker-nginx/src/letsencrypt/docker-compose.yml
+2b. Content:
+        version: '3.1'
+
+        services:
+
+          letsencrypt-nginx-container:
+            container_name: 'letsencrypt-nginx-container'
+            image: nginx:latest
+            ports:
+              - "80:80"
+            volumes:
+              - ./nginx.conf:/etc/nginx/conf.d/default.conf
+              - ./letsencrypt-site:/usr/share/nginx/html
+            networks:
+              - docker-network
+
+        networks:
+          docker-network:
+            driver: bridge
+
+3. Create nginx config file on server:
+    sudo nano /docker/letsencrypt-docker-nginx/src/letsencrypt/nginx.conf
+3b. Content:
+    server {
+        listen 80;
+        listen [::]:80;
+        server_name fits-best.andrzejewski.it www.fits-best.andrzejewski.it;
+
+        location ~ /.well-known/acme-challenge {
+            allow all;
+            root /usr/share/nginx/html;
+        }
+
+        root /usr/share/nginx/html;
+        index index.html;
+    }
+
+4. Create index.html file on server:
+    sudo nano /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site/index.html
+4b. Content:
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Let's Encrypt First Time Cert Issue Site</title>
+    </head>
+    <body>
+        <h1>Oh, hai there!</h1>
+        <p>
+            This is the temporary site that will only be used for the very first time SSL certificates are issued by Let's Encrypt's
+            certbot.
+        </p>
+    </body>
+    </html>
+
+5. Change catalog:
+    cd /docker/letsencrypt-docker-nginx/src/letsencrypt
+6. Run temporary Nginx site in docker:
+    sudo docker-compose up -d
+7. Run a staging command to check if the Certbot request will be successful:
+
+    sudo docker run -it --rm \
+    -v /docker-volumes/etc/letsencrypt:/etc/letsencrypt \
+    -v /docker-volumes/var/lib/letsencrypt:/var/lib/letsencrypt \
+    -v /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site:/data/letsencrypt \
+    -v "/docker-volumes/var/log/letsencrypt:/var/log/letsencrypt" \
+    certbot/certbot \
+    certonly --webroot \
+    --register-unsafely-without-email --agree-tos \
+    --webroot-path=/data/letsencrypt \
+    --staging \
+    -d fits-best.andrzejewski.it -d www.fits-best.andrzejewski.it
+
+8. Continue only if previous command was successful. Cleanup staging artifacts:
+    sudo rm -rf /docker-volumes/
+9. Run certbot, this time for real
+
+    sudo docker run -it --rm \
+    -v /docker-volumes/etc/letsencrypt:/etc/letsencrypt \
+    -v /docker-volumes/var/lib/letsencrypt:/var/lib/letsencrypt \
+    -v /docker/letsencrypt-docker-nginx/src/letsencrypt/letsencrypt-site:/data/letsencrypt \
+    -v "/docker-volumes/var/log/letsencrypt:/var/log/letsencrypt" \
+    certbot/certbot \
+    certonly --webroot \
+    --email pramuspl@gmail.com --agree-tos --no-eff-email \
+    --webroot-path=/data/letsencrypt \
+    -d fits-best.andrzejewski.it -d www.fits-best.andrzejewski.it
+
+10. Continue if successful. Change directory:
+    cd /docker/letsencrypt-docker-nginx/src/letsencrypt
+11. Stop the temporary Nginx site used for getting the certificate:
+    sudo docker-compose down
+
+II. RUN PRODUCTION SITE ON HTTPS
+
+12. Create directories for production:
+
+    sudo mkdir -p /docker/letsencrypt-docker-nginx/src/production/production-site
+    sudo mkdir -p /docker/letsencrypt-docker-nginx/src/production/dh-param
+
+13. Create docker-compose file:
+    sudo nano /docker/letsencrypt-docker-nginx/src/production/docker-compose.yml
+13b. Content:
+    version: '3.1'
+
+    services:
+
+      production-nginx-container:
+        container_name: 'production-nginx-container'
+        image: nginx:latest
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - ./production.conf:/etc/nginx/conf.d/default.conf
+          - ./production-site:/usr/share/nginx/html
+          - ./dh-param/dhparam-2048.pem:/etc/ssl/certs/dhparam-2048.pem
+          - /docker-volumes/etc/letsencrypt/live/fits-best.andrzejewski.it/fullchain.pem:/etc/letsencrypt/live/fits-best.andrzejewski.it/fullchain.pem
+          - /docker-volumes/etc/letsencrypt/live/fits-best.andrzejewski.it/privkey.pem:/etc/letsencrypt/live/fits-best.andrzejewski.it/privkey.pem
+        networks:
+          - docker-network
+
+    networks:
+      docker-network:
+        driver: bridge
+
+14. Create nginx config file:
+    sudo nano /docker/letsencrypt-docker-nginx/src/production/production.conf
+14b. Content:
+    server {
+        listen      80;
+        listen [::]:80;
+        server_name fits-best.andrzejewski.it www.fits-best.andrzejewski.it;
+
+        location / {
+            rewrite ^ https://$host$request_uri? permanent;
+        }
+
+        #for certbot challenges (renewal process)
+        location ~ /.well-known/acme-challenge {
+            allow all;
+            root /data/letsencrypt;
+        }
+    }
+
+    #https://fits-best.andrzejewski.it
+    server {
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+        server_name fits-best.andrzejewski.it;
+
+        server_tokens off;
+
+        ssl_certificate /etc/letsencrypt/live/fits-best.andrzejewski.it/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/fits-best.andrzejewski.it/privkey.pem;
+
+        ssl_buffer_size 8k;
+
+        ssl_dhparam /etc/ssl/certs/dhparam-2048.pem;
+
+        ssl_protocols TLSv1.2 TLSv1.1 TLSv1;
+        ssl_prefer_server_ciphers on;
+
+        ssl_ciphers ECDH+AESGCM:ECDH+AES256:ECDH+AES128:DH+3DES:!ADH:!AECDH:!MD5;
+
+        ssl_ecdh_curve secp384r1;
+        ssl_session_tickets off;
+
+        # OCSP stapling
+        ssl_stapling on;
+        ssl_stapling_verify on;
+        resolver 8.8.8.8;
+
+        return 301 https://www.fits-best.andrzejewski.it$request_uri;
+    }
+
+    #https://www.fits-best.andrzejewski.it
+    server {
+        server_name www.fits-best.andrzejewski.it;
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
+
+        server_tokens off;
+
+        ssl on;
+
+        ssl_buffer_size 8k;
+        ssl_dhparam /etc/ssl/certs/dhparam-2048.pem;
+
+        ssl_protocols TLSv1.2 TLSv1.1 TLSv1;
+        ssl_prefer_server_ciphers on;
+        ssl_ciphers ECDH+AESGCM:ECDH+AES256:ECDH+AES128:DH+3DES:!ADH:!AECDH:!MD5;
+
+        ssl_ecdh_curve secp384r1;
+        ssl_session_tickets off;
+
+        # OCSP stapling
+        ssl_stapling on;
+        ssl_stapling_verify on;
+        resolver 8.8.8.8 8.8.4.4;
+
+        ssl_certificate /etc/letsencrypt/live/fits-best.andrzejewski.it/fullchain.pem;
+        ssl_certificate_key /etc/letsencrypt/live/fits-best.andrzejewski.it/privkey.pem;
+
+        root /usr/share/nginx/html;
+        index index.html;
+    }
+
+15. Generate a 2048 bit DH Param file:
+    sudo openssl dhparam -out /docker/letsencrypt-docker-nginx/src/production/dh-param/dhparam-2048.pem 2048
+16. Copy page content to mapped directory:
+    /docker/letsencrypt-docker-nginx/src/production/production-site/
+17. Change catalog:
+    cd /docker/letsencrypt-docker-nginx/src/production
+18. Run production Nginx site in docker:
+    sudo docker-compose up -d
+
+III. SETUP CRON JOB TO AUTOMATICALLY RENEW CERTIFICATES
+
+19. Add a cron job:
+
+19b. Content at the end:
+0 23 * * * docker run --rm -it --name certbot -v "/docker-volumes/etc/letsencrypt:/etc/letsencrypt" -v "/docker-volumes/var/lib/letsencrypt:/var/lib/letsencrypt" -v "/docker-volumes/data/letsencrypt:/data/letsencrypt" -v "/docker-volumes/var/log/letsencrypt:/var/log/letsencrypt" certbot/certbot renew --webroot -w /data/letsencrypt --quiet && docker kill --signal=HUP production-nginx-container
