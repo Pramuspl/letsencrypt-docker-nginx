@@ -211,6 +211,10 @@ II. RUN PRODUCTION SITE ON HTTPS
 
         ssl_certificate /etc/letsencrypt/live/fits-best.andrzejewski.it/fullchain.pem;
         ssl_certificate_key /etc/letsencrypt/live/fits-best.andrzejewski.it/privkey.pem;
+        
+        location / {
+            try_files $uri /index.html;
+        }
 
         root /usr/share/nginx/html;
         index index.html;
